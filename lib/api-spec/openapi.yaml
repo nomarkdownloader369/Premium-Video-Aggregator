@@ -1,22 +1,26 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: PureX Video Aggregator API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: videos
+  - name: categories
+  - name: search
+  - name: auth
+  - name: user
+  - name: admin
+  - name: performers
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +28,367 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /videos:
+    get:
+      operationId: listVideos
+      tags: [videos]
+      summary: List published videos
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: source
+          in: query
+          schema: { type: string }
+        - name: order
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+
+  /videos/featured:
+    get:
+      operationId: getFeaturedVideos
+      tags: [videos]
+      summary: Get featured/trending videos for hero slider
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Featured videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+
+  /videos/top:
+    get:
+      operationId: getTopVideos
+      tags: [videos]
+      summary: Top videos by views
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Top videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+
+  /videos/{slug}:
+    get:
+      operationId: getVideoBySlug
+      tags: [videos]
+      summary: Get video by slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Video
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/view:
+    post:
+      operationId: incrementView
+      tags: [videos]
+      summary: Increment view count
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /videos/submit:
+    post:
+      operationId: submitVideo
+      tags: [videos]
+      summary: Submit a video for moderation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+
+  /categories:
+    get:
+      operationId: listCategories
+      tags: [categories]
+      summary: List all categories
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+
+  /search/suggest:
+    get:
+      operationId: searchSuggest
+      tags: [search]
+      summary: Search autocomplete suggestions
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchSuggestion"
+
+  /performers:
+    get:
+      operationId: fetchPerformer
+      tags: [performers]
+      summary: Get performer page
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Performer data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerformerPage"
+
+  /studios:
+    get:
+      operationId: fetchStudio
+      tags: [performers]
+      summary: Get studio page
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Studio data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerformerPage"
+
+  /auth/register:
+    post:
+      operationId: authRegister
+      tags: [auth]
+      summary: Register new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/login:
+    post:
+      operationId: authLogin
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /user/videos:
+    get:
+      operationId: getUserVideos
+      tags: [user]
+      summary: Get current user's submitted videos
+      responses:
+        "200":
+          description: User videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+
+  /admin/videos:
+    get:
+      operationId: adminListVideos
+      tags: [admin]
+      summary: Admin list all videos
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: All videos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+
+  /admin/videos/{id}:
+    patch:
+      operationId: adminUpdateVideo
+      tags: [admin]
+      summary: Admin update video status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoStatusUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+    delete:
+      operationId: adminDeleteVideo
+      tags: [admin]
+      summary: Admin delete video
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /admin/stats:
+    get:
+      operationId: getAdminStats
+      tags: [admin]
+      summary: Get admin statistics
+      responses:
+        "200":
+          description: Admin stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStats"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +396,184 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required: [ok]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    Video:
+      type: object
+      required: [id, slug, title, status, views_count, likes_count, trending_score, is_editor_pick, tags, created_at]
+      properties:
+        id:
+          type: integer
+        slug:
+          type: string
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        thumbnail_url:
+          type: ["string", "null"]
+        embed_url:
+          type: ["string", "null"]
+        external_id:
+          type: ["string", "null"]
+        source:
+          type: ["string", "null"]
+        duration_seconds:
+          type: ["integer", "null"]
+        category_id:
+          type: ["integer", "null"]
+        category_name:
+          type: ["string", "null"]
+        status:
+          type: string
+        views_count:
+          type: integer
+        likes_count:
+          type: integer
+        trending_score:
+          type: number
+        is_editor_pick:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        performers:
+          type: array
+          items:
+            type: string
+        studio:
+          type: ["string", "null"]
+        published_at:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        submitter_id:
+          type: ["integer", "null"]
+
+    VideoInput:
+      type: object
+      required: [title, embed_code]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        embed_code:
+          type: string
+        thumbnail_url:
+          type: string
+
+    VideoStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        is_editor_pick:
+          type: boolean
+
+    Category:
+      type: object
+      required: [id, slug, name, sort_order]
+      properties:
+        id:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        icon:
+          type: ["string", "null"]
+        color:
+          type: ["string", "null"]
+        sort_order:
+          type: integer
+        video_count:
+          type: integer
+
+    SearchSuggestion:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+        value:
+          type: string
+
+    PerformerPage:
+      type: object
+      required: [name, total_views, video_count, videos]
+      properties:
+        name:
+          type: string
+        total_views:
+          type: integer
+        video_count:
+          type: integer
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
+
+    AuthInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+
+    AdminStats:
+      type: object
+      required: [total_videos, published_videos, pending_videos, total_views, total_users]
+      properties:
+        total_videos:
+          type: integer
+        published_videos:
+          type: integer
+        pending_videos:
+          type: integer
+        total_views:
+          type: integer
+        total_users:
+          type: integer

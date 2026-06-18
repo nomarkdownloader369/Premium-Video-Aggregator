@@ -1,0 +1,1 @@
+- [better-sqlite3 native build](better-sqlite3-native.md) — must run `npm rebuild` inside the package dir if binary is missing after install
