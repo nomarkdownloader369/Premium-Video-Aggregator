@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/pervflix/"
+title = "PervFlix"
+version = "1.0.0"
+id = "artifacts/pervflix"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/pervflix/" ]
+localPort = 22141
+
+[services.development]
+run = "pnpm --filter @workspace/pervflix run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pervflix", "run", "build" ]
+publicDir = "artifacts/pervflix/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22141"
+BASE_PATH = "/pervflix/"
