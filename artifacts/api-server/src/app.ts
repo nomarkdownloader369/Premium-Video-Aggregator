@@ -5,11 +5,19 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { initDb } from "./db/index";
 import { seedCategories, seedAdminUser } from "./db/seed";
+import { startScraperDaemon } from "./lib/scraper";
 
-// Initialize SQLite
+// Initialize SQLite (PureX)
 initDb();
 seedCategories();
 seedAdminUser();
+
+// Start PervFlix scraper daemon (runs every 3h, first run after 30s)
+if (process.env["DATABASE_URL"]) {
+  startScraperDaemon();
+} else {
+  logger.warn("DATABASE_URL not set — PervFlix scraper daemon not started");
+}
 
 const app: Express = express();
 

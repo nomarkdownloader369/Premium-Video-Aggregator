@@ -7,6 +7,7 @@ import authRouter from "./auth";
 import userRouter from "./user";
 import adminRouter from "./admin";
 import performersRouter from "./performers";
+import pfRouter from "./pf";
 
 const router: IRouter = Router();
 
@@ -19,5 +20,6 @@ router.use("/user", userRouter);
 router.use("/admin", adminRouter);
 router.use("/performers", performersRouter);
 router.use("/studios", performersRouter);
+router.use("/pf", pfRouter);
 
 export default router;

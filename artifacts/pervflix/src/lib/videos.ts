@@ -9,6 +9,8 @@ export type Video = {
   quality: "4K" | "1080p" | "HD";
   description: string;
   thumbSeed: string;
+  thumbnailUrl?: string;
+  embedUrl?: string;
   tags: string[];
 };
 
@@ -123,6 +125,12 @@ export function getVideo(slug: string): Video | undefined {
   return VIDEOS.find((v) => v.slug === slug);
 }
 
-export function thumbUrl(seed: string, w = 800, h = 450) {
+/**
+ * Returns a thumbnail URL for a video.
+ * - If seed is already a full URL (real thumbnail from the API), returns it directly.
+ * - Otherwise generates a picsum placeholder for mock data.
+ */
+export function thumbUrl(seed: string, w = 800, h = 450): string {
+  if (seed.startsWith("http://") || seed.startsWith("https://")) return seed;
   return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${w}/${h}`;
 }
