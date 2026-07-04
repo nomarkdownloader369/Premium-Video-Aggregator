@@ -1,6 +1,7 @@
-import { Link } from "wouter";
+import { Link, useSearch, useLocation } from "wouter";
 import { useEffect, useState } from "react";
 import { HERO_SLIDES, VIDEOS, TRENDING, thumbUrl, type Video } from "@/lib/videos";
+import { api } from "@/lib/api";
 
 export default function Home() {
   return (
@@ -210,36 +211,93 @@ export function VideoCard({ video }: { video: Video }) {
   );
 }
 
+const SORT_OPTIONS = [
+  { label: "New", value: "new" },
+  { label: "Top Rated", value: "top" },
+  { label: "Most Viewed", value: "views" },
+] as const;
+
 function VideoGrid() {
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const params = new URLSearchParams(search);
+  const selectedStudio = params.get("studio") ?? "";
+  const selectedSort = (params.get("sort") ?? "new") as "new" | "top" | "views";
+  const searchQuery = params.get("q") ?? "";
+
+  const [videos, setVideos] = useState<Video[]>(VIDEOS);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    api
+      .listVideos({
+        studio: selectedStudio || undefined,
+        sort: selectedSort,
+        q: searchQuery || undefined,
+        limit: 24,
+      })
+      .then((data) => {
+        setVideos(data.length ? data : VIDEOS);
+      })
+      .catch(() => setVideos(VIDEOS))
+      .finally(() => setLoading(false));
+  }, [selectedStudio, selectedSort, searchQuery]);
+
+  function setSort(sort: string) {
+    const next = new URLSearchParams(search);
+    next.set("sort", sort);
+    setLocation(`/?${next.toString()}`);
+  }
+
+  const heading = selectedStudio
+    ? `${selectedStudio} Releases`
+    : searchQuery
+      ? `Results for "${searchQuery}"`
+      : "Latest Releases";
+
   return (
     <section className="mx-auto max-w-[1400px] px-0 py-8 sm:px-6 sm:py-12">
       <div className="mb-4 sm:mb-6 sm:flex sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-black tracking-tight sm:text-3xl" style={{ fontFamily: "var(--font-display)" }}>
-            Latest Releases
+            {heading}
           </h2>
         </div>
         <div className="-mx-2 mt-3 flex gap-2 overflow-x-auto px-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:mt-0 sm:overflow-visible sm:px-0 sm:pb-0">
-          {["New", "Top Rated", "Most Viewed"].map((f, i) => (
+          {SORT_OPTIONS.map((opt) => (
             <button
-              key={f}
+              key={opt.value}
+              onClick={() => setSort(opt.value)}
               className={
                 "shrink-0 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide sm:rounded-sm sm:px-3 sm:py-1.5 sm:text-xs " +
-                (i === 0
+                (selectedSort === opt.value
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-[color:var(--hairline)] text-foreground/80 hover:border-primary hover:text-primary")
               }
             >
-              {f}
+              {opt.label}
             </button>
           ))}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-1 gap-y-4 lg:grid-cols-4 lg:gap-x-3 lg:gap-y-6">
-        {VIDEOS.map((v) => (
-          <VideoCard key={v.slug} video={v} />
-        ))}
-      </div>
+      {loading ? (
+        <div className="grid grid-cols-2 gap-x-1 gap-y-4 lg:grid-cols-4 lg:gap-x-3 lg:gap-y-6">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="animate-pulse">
+              <div className="aspect-video w-full rounded-sm bg-[color:var(--surface-2)]" />
+              <div className="mt-3 h-4 w-3/4 rounded bg-[color:var(--surface-2)]" />
+              <div className="mt-2 h-3 w-1/2 rounded bg-[color:var(--surface-2)]" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-x-1 gap-y-4 lg:grid-cols-4 lg:gap-x-3 lg:gap-y-6">
+          {videos.map((v) => (
+            <VideoCard key={v.slug} video={v} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

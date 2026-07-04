@@ -1,26 +1,25 @@
 import { load } from "cheerio";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { logger } from "./logger";
 import { getPfDb, pfVideosTable } from "./pfDb";
 import type { PfVideoInsert } from "@workspace/db/schema";
 
 const BASE = "https://hqporner.com";
+const CDN = "https:"; // thumbnails start with //fastporndelivery.hqporner.com
 
-const STUDIO_WHITELIST = new Set([
-  "brazzers",
-  "blacked",
-  "tushy",
-  "mylf",
-  "team skeet",
-  "bangbros",
-  "nubiles",
-  "reality kings",
-  "mofos",
-  "naughty america",
-  "digital playground",
-]);
-
-const QUALITY_ACCEPT = new Set(["1080p", "2k", "4k"]);
+const STUDIO_WHITELIST: Record<string, string> = {
+  brazzers: "Brazzers",
+  blacked: "BLACKED",
+  tushy: "TUSHY",
+  mylf: "MYLF",
+  "team skeet": "Team Skeet",
+  bangbros: "Bangbros",
+  nubiles: "Nubiles",
+  "reality kings": "Reality Kings",
+  mofos: "Mofos",
+  "naughty america": "Naughty America",
+  "digital playground": "Digital Playground",
+};
 
 const CATEGORY_MAP: Record<string, string> = {
   milf: "milf",
@@ -32,24 +31,74 @@ const CATEGORY_MAP: Record<string, string> = {
   interracial: "interracial",
   blowjob: "blowjob",
   "big tits": "big tits",
+  bigass: "big ass",
   creampie: "creampie",
   threesome: "threesome",
   stepmom: "stepmom",
+  "step-mom": "stepmom",
   cosplay: "cosplay",
   public: "public",
 };
 
+const QUALITY_ACCEPT = new Set(["1080p", "2k", "4k"]);
+
 const HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate, br",
+  "Sec-Ch-Ua": '"Chromium";v="125", "Not.A/Brand";v="24"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
   Referer: BASE,
+  Connection: "keep-alive",
 };
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Parse HQporner duration format: "20m 1s", "49m 15s", "1h 3m 42s"
+ */
+function parseDuration(text: string): number {
+  let secs = 0;
+  const h = text.match(/(\d+)h/);
+  const m = text.match(/(\d+)m/);
+  const s = text.match(/(\d+)s/);
+  if (h) secs += parseInt(h[1], 10) * 3600;
+  if (m) secs += parseInt(m[1], 10) * 60;
+  if (s) secs += parseInt(s[1], 10);
+  return secs;
+}
+
+/**
+ * Format duration seconds back to text like "34:45" or "1:03:42"
+ */
+function formatDuration(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function resolveCategory(tags: string[]): string {
+  for (const tag of tags) {
+    const key = tag.toLowerCase().trim();
+    if (CATEGORY_MAP[key]) return CATEGORY_MAP[key];
+    // partial match
+    for (const [pattern, cat] of Object.entries(CATEGORY_MAP)) {
+      if (key.includes(pattern)) return cat;
+    }
+  }
+  return "amateur";
 }
 
 function slugify(title: string, id: string) {
@@ -64,26 +113,11 @@ function slugify(title: string, id: string) {
   );
 }
 
-function parseDuration(text: string): number {
-  const clean = text.trim().replace(/[^0-9:]/g, "");
-  const parts = clean.split(":").map(Number);
-  if (parts.length === 3) return (parts[0] ?? 0) * 3600 + (parts[1] ?? 0) * 60 + (parts[2] ?? 0);
-  if (parts.length === 2) return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
-  return 0;
-}
-
-function formatViews(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return String(n);
-}
-
-function resolveCategory(tags: string[]): string {
-  for (const tag of tags) {
-    const key = tag.toLowerCase().trim();
-    if (CATEGORY_MAP[key]) return CATEGORY_MAP[key];
-  }
-  return "amateur";
+function absoluteUrl(src: string): string {
+  if (!src) return "";
+  if (src.startsWith("//")) return CDN + src;
+  if (src.startsWith("http")) return src;
+  return BASE + src;
 }
 
 async function fetchHtml(url: string): Promise<string | null> {
@@ -106,76 +140,106 @@ interface VideoStub {
   thumbUrl: string;
   durationText: string;
   durationSeconds: number;
-  views: number;
+  videoId: string;
+  studioKey: string;
 }
 
-async function scrapeListingPage(pageUrl: string): Promise<VideoStub[]> {
+/**
+ * Parse the HQporner listing page.
+ * Each video card is <section class="box feature"> inside a <div class="6u">.
+ * The video link is <a href="/hdporn/ID-slug.html">.
+ * Thumbnail: <img id="cover_ID" src="//cdn/..." alt="title" />.
+ * Duration: <span class="icon fa-clock-o meta-data">20m 1s</span>.
+ */
+async function scrapeListingPage(pageUrl: string, studioKey: string): Promise<VideoStub[]> {
   const html = await fetchHtml(pageUrl);
   if (!html) return [];
 
   const $ = load(html);
   const stubs: VideoStub[] = [];
+  const seen = new Set<string>();
 
-  // HQporner video cards — selector may need tuning if layout changes
-  $("article.col, .video-item, article, .col-xs-6").each((_, el) => {
+  // All video links match /hdporn/{id}-{slug}.html
+  $("a[href*='/hdporn/']").each((_, el) => {
     try {
-      const a = $(el).find("a[href*='/hdporn/']").first();
-      const href = a.attr("href");
-      if (!href) return;
+      const href = $(el).attr("href") ?? "";
+      if (!href.includes("/hdporn/")) return;
 
-      const url = href.startsWith("http") ? href : BASE + href;
-      const title = (
-        a.attr("title") ||
-        $(el).find(".title, h3, h2, .video-title").first().text() ||
-        ""
-      ).trim();
-      const thumb =
-        $(el).find("img[data-src], img[src]").first().attr("data-src") ||
-        $(el).find("img[data-src], img[src]").first().attr("src") ||
-        "";
-      const durText = $(el).find(".duration, .time, [class*='dur']").first().text().trim();
+      // Extract video ID from href
+      const idMatch = href.match(/\/hdporn\/(\d+)-/);
+      if (!idMatch?.[1]) return;
+      const videoId = idMatch[1];
+      if (seen.has(videoId)) return;
+      seen.add(videoId);
+
+      const url = absoluteUrl(href);
+
+      // Find thumbnail: img with id="cover_{ID}"
+      const imgEl = $(`img#cover_${videoId}`);
+      const thumbSrc = imgEl.attr("src") ?? imgEl.attr("data-src") ?? "";
+      const thumbUrl = absoluteUrl(thumbSrc);
+      const title = (imgEl.attr("alt") ?? "").trim();
+
+      if (!title) return;
+
+      // Find duration: look for .fa-clock-o in the nearest parent section
+      const section = $(el).closest("section.box.feature, div.6u");
+      const durText = section.find(".fa-clock-o").first().text().trim() ||
+        section.find("[class*='clock']").first().text().trim();
       const durSecs = parseDuration(durText);
 
-      const viewsRaw = $(el).find(".views, [class*='view']").first().text().replace(/[^0-9]/g, "");
-      const views = viewsRaw ? parseInt(viewsRaw, 10) : 0;
-
-      if (!title || !href) return;
-
-      stubs.push({ url, title, thumbUrl: thumb, durationText: durText, durationSeconds: durSecs, views });
+      stubs.push({ url, title, thumbUrl, durationText: durText, durationSeconds: durSecs, videoId, studioKey });
     } catch {
       // skip malformed card
     }
   });
 
+  logger.info({ page: pageUrl, count: stubs.length }, "Scraper: listing page scraped");
   return stubs;
 }
 
+/**
+ * Parse the HQporner video detail page.
+ * Embed: .videoWrapper iframe[src].
+ * Quality: look for "1080p", "2k", "4k" in category tag links or keywords meta.
+ * Tags: a.tag-link links.
+ * Pornstars: a[href*="/actress/"].
+ */
 async function scrapeVideoPage(stub: VideoStub): Promise<PfVideoInsert | null> {
   const html = await fetchHtml(stub.url);
   if (!html) return null;
 
   const $ = load(html);
 
-  // Extract video ID from URL: /hdporn/{id}/title
-  const idMatch = stub.url.match(/\/hdporn\/([a-zA-Z0-9_-]+)/);
-  const videoId = idMatch?.[1] ?? "";
-  if (!videoId) return null;
+  // ── Embed URL ─────────────────────────────────────────────────────────────
+  const embedSrc =
+    $(".videoWrapper iframe").first().attr("src") ??
+    $(".video-container iframe").first().attr("src") ??
+    $("iframe[src*='mydaddy.cc'], iframe[src*='hqporner.com/embed']").first().attr("src") ??
+    "";
+  const embedUrl = absoluteUrl(embedSrc);
+  if (!embedUrl) {
+    logger.debug({ url: stub.url }, "Scraper: no embed URL found, skipping");
+    return null;
+  }
 
-  // Quality: look for resolution labels in source list or quality menu
+  // ── Quality ────────────────────────────────────────────────────────────────
+  // Check category tag links: <a href="/category/1080p-porn">1080p</a>
   const qualityLabels: string[] = [];
-  $("[data-res], .quality-item, .btn-quality, option[value], .source-item").each((_, el) => {
-    const text = ($(el).attr("data-res") || $(el).text()).toLowerCase().trim();
-    if (text.includes("4k") || text.includes("2160")) qualityLabels.push("4k");
-    else if (text.includes("2k") || text.includes("1440")) qualityLabels.push("2k");
-    else if (text.includes("1080")) qualityLabels.push("1080p");
+  $("a.tag-link").each((_, el) => {
+    const text = $(el).text().toLowerCase().trim();
+    const href = ($(el).attr("href") ?? "").toLowerCase();
+    if (text === "4k" || href.includes("4k")) qualityLabels.push("4k");
+    else if (text === "2k" || href.includes("2k")) qualityLabels.push("2k");
+    else if (text === "1080p" || href.includes("1080p")) qualityLabels.push("1080p");
   });
 
-  // Also scan all text for quality hints
-  const bodyText = $("body").text().toLowerCase();
+  // Also check the keywords meta tag
   if (!qualityLabels.length) {
-    if (bodyText.includes("4k") || bodyText.includes("2160p")) qualityLabels.push("4k");
-    else if (bodyText.includes("2k") || bodyText.includes("1440p")) qualityLabels.push("2k");
-    else if (bodyText.includes("1080p")) qualityLabels.push("1080p");
+    const keywords = ($("meta[name='keywords']").attr("content") ?? "").toLowerCase();
+    if (keywords.includes("4k")) qualityLabels.push("4k");
+    else if (keywords.includes("2k") || keywords.includes("1440p")) qualityLabels.push("2k");
+    else if (keywords.includes("1080p")) qualityLabels.push("1080p");
   }
 
   const hasAcceptableQuality = qualityLabels.some((q) => QUALITY_ACCEPT.has(q));
@@ -183,70 +247,50 @@ async function scrapeVideoPage(stub: VideoStub): Promise<PfVideoInsert | null> {
     logger.debug({ url: stub.url, qualityLabels }, "Scraper: filtered — no premium quality");
     return null;
   }
+  const qualityLabel = qualityLabels.includes("4k") ? "4K" : qualityLabels.includes("2k") ? "2K" : "1080p";
 
-  const qualityLabel = qualityLabels.includes("4k")
-    ? "4K"
-    : qualityLabels.includes("2k")
-      ? "2K"
-      : "1080p";
+  // ── Tags ───────────────────────────────────────────────────────────────────
+  const tags: string[] = [];
+  const skipTags = new Set(["1080p", "4k", "2k", "720p", "480p", "hd"]);
+  $("a.tag-link[href*='/category/']").each((_, el) => {
+    const t = $(el).text().toLowerCase().trim();
+    if (t && !skipTags.has(t) && t.length < 40) tags.push(t);
+  });
 
-  // Studio
-  const studioRaw = (
-    $(".studio a, .studio, [class*='studio'], .pornstar-studio a, .cat-studio").first().text() ||
-    $("a[href*='/studio/']").first().text() ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  // ── Pornstars ─────────────────────────────────────────────────────────────
+  const pornstars: string[] = [];
+  $("a[href*='/actress/']").each((_, el) => {
+    const n = $(el).text().trim();
+    if (n && n.length < 60) pornstars.push(n);
+  });
 
-  const studioNormalized = Array.from(STUDIO_WHITELIST).find(
-    (s) => studioRaw.includes(s) || s.includes(studioRaw)
-  );
-
-  if (!studioNormalized) {
-    logger.debug({ url: stub.url, studioRaw }, "Scraper: filtered — studio not in whitelist");
+  // ── Studio ────────────────────────────────────────────────────────────────
+  const studioDisplay = STUDIO_WHITELIST[stub.studioKey] ?? "";
+  if (!studioDisplay) {
+    logger.debug({ url: stub.url, studioKey: stub.studioKey }, "Scraper: unknown studio, skipping");
     return null;
   }
 
-  // Tags / categories
-  const tags: string[] = [];
-  $(".tag a, .tags a, .category a, [class*='tag'] a, [class*='cat'] a").each((_, el) => {
-    const t = $(el).text().trim().toLowerCase();
-    if (t && t.length < 40) tags.push(t);
-  });
-
-  // Pornstars
-  const pornstars: string[] = [];
-  $(".pornstar a, [class*='pornstar'] a, .model a, [class*='model'] a, [class*='actress'] a").each(
-    (_, el) => {
-      const n = $(el).text().trim();
-      if (n && n.length < 60) pornstars.push(n);
-    }
-  );
-
-  // Description
-  const description =
-    $(".video-description, .description, [class*='desc']").first().text().trim() ||
-    `Full-length premium studio release from ${studioNormalized}.`;
-
-  // Thumbnail
+  // ── Thumbnail (prefer detail page OG image if listing thumb missing) ───────
   const thumbnailUrl =
     stub.thumbUrl ||
-    $("meta[property='og:image']").attr("content") ||
-    $("video[poster]").attr("poster") ||
+    absoluteUrl($("meta[property='og:image']").attr("content") ?? "") ||
     "";
+  if (!thumbnailUrl) {
+    logger.debug({ url: stub.url }, "Scraper: no thumbnail, skipping");
+    return null;
+  }
 
-  // Embed URL — HQporner embed pattern
-  const embedUrl = `${BASE}/embed/${videoId}/`;
-
-  const slug = slugify(stub.title, videoId);
+  // ── Category ──────────────────────────────────────────────────────────────
   const category = resolveCategory(tags);
 
-  // Title-case studio
-  const studioDisplay = studioNormalized
-    .split(" ")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  // ── Description ───────────────────────────────────────────────────────────
+  const description =
+    $("meta[name='description']").attr("content")?.trim() ||
+    `Full-length ${qualityLabel} studio release from ${studioDisplay}.`;
+
+  const slug = slugify(stub.title, stub.videoId);
+  const durationText = stub.durationText || formatDuration(stub.durationSeconds);
 
   return {
     slug,
@@ -255,8 +299,8 @@ async function scrapeVideoPage(stub: VideoStub): Promise<PfVideoInsert | null> {
     embedUrl,
     thumbnailUrl,
     durationSeconds: stub.durationSeconds,
-    durationText: stub.durationText || null,
-    views: stub.views || 0,
+    durationText,
+    views: 0,
     likes: 0,
     qualityLabel,
     category,
@@ -270,7 +314,6 @@ async function scrapeVideoPage(stub: VideoStub): Promise<PfVideoInsert | null> {
 async function batchUpsert(rows: PfVideoInsert[]) {
   if (!rows.length) return;
   const db = getPfDb();
-  // Split into chunks of 50
   for (let i = 0; i < rows.length; i += 50) {
     const chunk = rows.slice(i, i + 50);
     try {
@@ -281,6 +324,7 @@ async function batchUpsert(rows: PfVideoInsert[]) {
           target: pfVideosTable.slug,
           set: {
             thumbnailUrl: sql`EXCLUDED.thumbnail_url`,
+            embedUrl: sql`EXCLUDED.embed_url`,
             views: sql`EXCLUDED.views`,
             qualityLabel: sql`EXCLUDED.quality_label`,
             updatedAt: sql`NOW()`,
@@ -296,21 +340,20 @@ async function batchUpsert(rows: PfVideoInsert[]) {
 export async function runScraper(): Promise<void> {
   logger.info("Scraper: starting HQporner ingestion run");
 
-  const pages = [
-    `${BASE}/`,
-    `${BASE}/latest/`,
-    `${BASE}/most-viewed/`,
-    `${BASE}/page/2/`,
-    `${BASE}/page/3/`,
-  ];
+  // Build pages to scrape: one search per studio × 2 pages each
+  const pages: Array<{ url: string; studioKey: string }> = [];
+  for (const studioKey of Object.keys(STUDIO_WHITELIST)) {
+    const q = encodeURIComponent(studioKey);
+    pages.push({ url: `${BASE}/?q=${q}`, studioKey });
+    pages.push({ url: `${BASE}/?q=${q}&page=2`, studioKey });
+  }
 
   const results: PfVideoInsert[] = [];
 
-  for (const pageUrl of pages) {
-    const stubs = await scrapeListingPage(pageUrl);
-    logger.info({ page: pageUrl, count: stubs.length }, "Scraper: listing page scraped");
+  for (const { url: pageUrl, studioKey } of pages) {
+    const stubs = await scrapeListingPage(pageUrl, studioKey);
 
-    // Filter by minimum duration early (skip video-page fetch for short clips)
+    // Filter by minimum duration (saves video-page fetches for obvious short clips)
     const candidates = stubs.filter((s) => {
       if (s.durationSeconds > 0 && s.durationSeconds < 900) {
         logger.debug({ title: s.title, dur: s.durationSeconds }, "Scraper: filtered — too short");
@@ -320,26 +363,27 @@ export async function runScraper(): Promise<void> {
     });
 
     for (const stub of candidates) {
-      await delay(200);
+      await delay(250);
       try {
         const video = await scrapeVideoPage(stub);
         if (!video) continue;
-        // Re-check duration after full scrape (may have been refined)
         if ((video.durationSeconds ?? 0) < 900) {
-          logger.debug({ slug: video.slug }, "Scraper: filtered after detail fetch — too short");
+          logger.debug({ slug: video.slug }, "Scraper: filtered — too short after detail");
           continue;
         }
         results.push(video);
+        logger.debug({ slug: video.slug, studio: video.studio }, "Scraper: video accepted");
       } catch (err) {
         logger.warn({ url: stub.url, err }, "Scraper: error on video page, skipping");
       }
     }
 
-    await delay(500);
+    await delay(600);
   }
 
   logger.info({ total: results.length }, "Scraper: ingestion complete, starting upsert");
   await batchUpsert(results);
+  logger.info("Scraper: run finished");
 }
 
 let _daemonTimer: ReturnType<typeof setTimeout> | null = null;
@@ -356,7 +400,7 @@ export function startScraperDaemon(): void {
     _daemonTimer = setTimeout(tick, INTERVAL_MS);
   }
 
-  // First run after 30s to let the server warm up
+  // First run 30s after server boot
   _daemonTimer = setTimeout(tick, 30_000);
   logger.info({ intervalHours: 3 }, "Scraper daemon: scheduled");
 }

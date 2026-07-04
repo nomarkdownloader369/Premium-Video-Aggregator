@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, Link } from "wouter";
+import { Switch, Route, Router as WouterRouter, Link, useLocation, useSearch } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +10,18 @@ import VideoPage from "@/pages/VideoPage";
 const queryClient = new QueryClient();
 
 function SiteHeader() {
+  const [, setLocation] = useLocation();
+  const search = useSearch();
+  const selectedStudio = new URLSearchParams(search).get("studio") ?? "";
+
+  function handleStudioClick(studio: string) {
+    if (selectedStudio === studio) {
+      setLocation("/");
+    } else {
+      setLocation(`/?studio=${encodeURIComponent(studio)}`);
+    }
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-[color:var(--hairline)] bg-black/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-3 py-3 sm:gap-4 sm:px-6">
@@ -28,7 +40,11 @@ function SiteHeader() {
         <form
           role="search"
           className="ml-auto flex min-w-0 flex-1 items-center gap-2 rounded-sm border border-[color:var(--hairline)] bg-[color:var(--surface-2)] px-3 py-2 focus-within:border-primary lg:max-w-xl"
-          onSubmit={(e) => e.preventDefault()}
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = (e.currentTarget.querySelector("input") as HTMLInputElement).value.trim();
+            if (q) setLocation(`/?q=${encodeURIComponent(q)}`);
+          }}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-muted-foreground">
             <circle cx="11" cy="11" r="7" />
@@ -61,12 +77,13 @@ function SiteHeader() {
             <span className="mr-1 shrink-0 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
               Studios
             </span>
-            {STUDIOS.map((s, i) => (
+            {STUDIOS.map((s) => (
               <button
                 key={s}
+                onClick={() => handleStudioClick(s)}
                 className={
                   "shrink-0 rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors " +
-                  (i === 0
+                  (selectedStudio === s
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-[color:var(--hairline)] bg-[color:var(--surface)] text-foreground/85 hover:border-primary hover:text-primary")
                 }
